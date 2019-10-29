@@ -9,3 +9,212 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+We started by forking data from github to this computer. This lab will be looking at data collected from the Santa Barbara Channel LTER, looking at Lobster populations. 
+
+Get in the habit of working by myself to pull frequently. 
+
+#### Lab 5 Objectives
+
+- Learn to parse dates with 'lubridate'
+- Get Count of observations with count()
+- Uncount() rows
+- One and two-sample t-test 
+- Create a heat map with geom_tile()
+
+```{r, include = FALSE}
+#Start by attaching packages
+
+library(tidyverse)
+library(janitor)
+library(here)
+
+#Now we will read in our data frame. 
+
+lobster_abundance <- read_csv(here("data","lobster_abundance.csv"),
+                              na="-99999") %>% 
+  clean_names()
+lobster_trap <- read_csv(here("data","lobster_traps.csv")) %>% 
+  clean_names()
+```
+
+Note that the na values are stored as -99999, but we want R to understand that is a missing value. Also don't want to type in caps all day, so we will use janitor::clean_names(). ALSO, Date is stored as a character variable, we will need to update this as well. 
+
+Data is also not in tidy format, each observation needs to have its own row, and with the LOBSTER_COUNT column, some of the data is hidden by the counts. IE, "x count" should have x number of rows. We will use tidyr::uncount() function to convert lobster data from frequency format to case format. 
+
+
+
+```{r}
+
+lobster_tidy <- lobster_abundance %>% 
+  tidyr::uncount(lobster_count) #what this does, it takes whatever the value is in that colun, and it repeats that row that number of times, and then deletes the column
+  
+
+```
+
+#### Exploratory data vizualization
+
+We are only going to consider 'site' as out variable of interest 
+
+```{r}
+
+ggplot(data = lobster_tidy, aes(x=site, y=size_mm)) +
+  geom_jitter(aes(color=site),
+              alpha = 0.5,
+              width = 0.2)
+
+# Histogram for each different site
+
+ggplot(data = lobster_tidy, aes(x=size_mm)) +
+  geom_histogram(aes(fill = site)) +
+  facet_wrap(~site, scales = "free")
+
+#Now time for the qqplot 
+
+#Need to give a sample to compare to normal dist in aes for a qq plot
+ggplot(lobster_tidy, aes(sample = size_mm)) +
+  geom_qq() +
+  facet_wrap(~site, scale="free")
+
+#Overall, this looks like a fairly linear relationship across all sites. Do not let a few outliers decide that we can no longer use a normal distribution, because they do not carry much weight vs hundreds/thousands of different points. 
+
+#Sample size of 30+ due to CLT means should be normally distributed regardless. 
+
+```
+
+#### Convert the date column to class 'Date' then we will use parsed pieces to make actual counts. 
+
+We will sue the 'lubridate' package to convert to Date format, and then to help us easily parse month and year.
+
+```{r}
+
+lobster_date <- lobster_tidy %>% 
+  mutate(#Telling R what the new date format is, existing strucute is mm/dd/yyyy
+    date_new = lubridate::mdy(date)
+    ) %>% 
+  select(-date)
+  
+```
+
+Now lets parse yar and month using lubridate::month() and lubridate::year()
+
+```{r}
+#Gonna add new column for just month and just year, keeping new date
+#Could have piped into this but making new because YOCO
+
+lob_parse_date <- lobster_date %>% 
+  mutate(
+    obs_month = lubridate::month(date_new,
+                                 label = TRUE),
+    obs_year = lubridate::year(date_new)
+  )
+
+
+```
+
+Now lets find counts of lobsters based on different hierarchical groupings. We will use dplyr::count()
+
+First, lets count lobsters by year and month
+```{r}
+
+lobster_ym <- lob_parse_date %>% 
+  count(obs_year, obs_month)
+
+lobster_y <- lob_parse_date %>% 
+  count(obs_year)
+
+lob_site <- lob_parse_date %>% 
+  count(site)
+
+```
+
+Ifwe want to create a summary table that contains statistics OTHER than counts by group, its easier to use group_by() + n()
+
+```{r}
+lobs_summary <- lob_parse_date %>% 
+  group_by(site) %>% 
+  summarize(
+    lobster_number = n(),
+    mean_size = mean(size_mm, na.rm = TRUE),
+    sd_size = sd(size_mm, na.rm = TRUE)
+  )
+
+lobs_summary
+```
+
+#### Next we will find confidence intervals (not yet discussed in lecture but you know these)
+
+Use t.test funciton from base R to find CI intervals (for one sample_ and perform t-tests to compare means of two samples (... covered conceptually in week6 lectures))
+
+```{r}
+ivee_lobs <- lobster_tidy %>% 
+  filter(site == "IVEE") %>% 
+  pull(size_mm) #creates vector 
+
+# now will use t.test function to find mean of vector 
+
+t.test(ivee_lobs)
+
+
+```
+
+#### Now we will do a two sample t-test to compare means 
+
+Null hypothesis always assumes that there is no relation / no effect 
+
+We want to ask is there a signifciant difference in lobster length at Naples and Mohawrk reefs? 
+
+We've done out necessary exploratory analyses to determine that in a 2-sample t-test means is an appropriate comparrison. 
+
+```{r}
+
+naple_sample <- lobster_tidy %>% 
+  filter(site == "NAPL") %>% 
+  pull(size_mm)
+
+
+mohk_sample <- lobster_tidy %>% 
+  filter(site=="MOHK") %>% 
+  pull(size_mm)
+
+#t-test needs full vector to do a proper t.test. 
+
+mn_ttest <- t.test(mohk_sample, naple_sample) 
+
+#some values may be negative, because of order of table. statistical value does not make a difference 
+mn_ttest
+
+
+```
+
+There is a significant difference in lobster lengths between Naples and Mohwak Reef. (t(df- statistic, p <0.001), alpha = 0.05). 
+
+```{r}
+
+lobster_mn <- lobster_tidy %>% 
+  filter(site == c("NAPL","MOHK"))
+
+mn_ttest2 <- t.test(size_mm ~ site, data = lobster_mn)
+
+mn_ttest
+
+```
+
+Here is the p-value: `r mn_ttest2$p.value`
+Here is the t-statistic: `r mn_ttest2$statistic`
+
+#### NOW A HEAT MAP (So hawt)
+
+```{r}
+
+lobster_ys <-  lob_parse_date %>% 
+  count(obs_year, site)
+
+ggplot(data = lobster_ys, aes(x=obs_year, y = site)) +
+  geom_tile(aes(fill=n))
+
+
+
+
+```
+
+
